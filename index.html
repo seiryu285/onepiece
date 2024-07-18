@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Immersive 3D Book Experience</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;700&display=swap');
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            overflow: hidden;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: background 0.5s ease;
+        }
+        #scene-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+        #book-info {
+            position: fixed;
+            left: 50%;
+            bottom: 20px;
+            transform: translateX(-50%);
+            background: rgba(255,255,255,0.9);
+            padding: 1rem;
+            border-radius: 1rem;
+            max-width: 90%;
+            width: 300px;
+            opacity: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow-y: auto;
+            max-height: 60vh;
+            transform: translateX(-50%) translateY(100%);
+        }
+        #book-info.visible {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        #buy-button, #info-toggle {
+            position: fixed;
+            bottom: 10px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 0.8rem 1.5rem;
+            border-radius: 2rem;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background 0.3s ease;
+        }
+        #buy-button:hover, #info-toggle:hover {
+            background: #45a049;
+        }
+        #buy-button {
+            left: 10px;
+        }
+        #info-toggle {
+            right: 10px;
+            background: #2196F3;
+        }
+        #info-toggle:hover {
+            background: #1e88e5;
+        }
+        #theme-toggle, #lang-toggle, #prev-book, #next-book {
+            position: fixed;
+            background: rgba(255,255,255,0.7);
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            z-index: 10;
+            padding: 10px;
+            border-radius: 50%;
+        }
+        #theme-toggle { top: 20px; right: 20px; }
+        #lang-toggle { top: 20px; right: 70px; }
+        #prev-book { top: 50%; left: 20px; transform: translateY(-50%); }
+        #next-book { top: 50%; right: 20px; transform: translateY(-50%); }
+
+        @media (max-width: 768px) {
+            #book-info {
+                font-size: 0.9em;
+                padding: 0.8rem;
+            }
+            #buy-button, #info-toggle {
+                font-size: 0.9em;
+                padding: 0.6rem 1.2rem;
+            }
+            #theme-toggle, #lang-toggle, #prev-book, #next-book {
+                font-size: 20px;
+                padding: 8px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            #book-info {
+                font-size: 0.8em;
+                padding: 0.6rem;
+                max-width: 85%;
+            }
+            #buy-button, #info-toggle {
+                font-size: 0.8em;
+                padding: 0.5rem 1rem;
+            }
+            #theme-toggle, #lang-toggle, #prev-book, #next-book {
+                font-size: 18px;
+                padding: 6px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="scene-container"></div>
+    <div id="book-info"></div>
+    <button id="buy-button">Add to Cart</button>
+    <button id="info-toggle">Show Info</button>
+    <button id="theme-toggle">🌓</button>
+    <button id="lang-toggle">🌐</button>
+    <button id="prev-book">◀</button>
+    <button id="next-book">▶</button>
+
+    <script>
+        let scene, camera, renderer, book;
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let currentLanguage = 'en';
+        let currentBookIndex = 0;
+        let isInfoVisible = false;
+        let isMobile = false;
+        
+        const BOOK_WIDTH = 3;
+        const BOOK_HEIGHT = 4;
+        const BOOK_THICKNESS = 0.3;
+        const COVER_THICKNESS = 0.02;
+
+        let books = [
+            {
+                title: "Hello Anime",
+                titleJa: "ハローアニメ",
+                author: "Custom Author",
+                authorJa: "カスタム著者",
+                description: "A delightful journey into the world of anime.",
+                descriptionJa: "アニメの世界への楽しい旅。",
+                price: "$29.99",
+                priceJa: "￥3,299",
+                pages: 200,
+                coverColor: 0xFFFFFF,
+                spineColor: 0xE0E0E0,
+                backgroundColor: "linear-gradient(135deg, #FFB6C1 0%, #FFC0CB 100%)",
+                coverImage: "https://i.postimg.cc/TPKVbWhs/Hello-Anime-1.jpg"
+            },
+            // ... 他の本のデータ ...
+        ];
+
+        function init() {
+            scene = new THREE.Scene();
+            
+            const aspect = window.innerWidth / window.innerHeight;
+            isMobile = window.innerWidth <= 768;
+            const fov = isMobile ? 65 : 75;
+            
+            camera = new THREE.PerspectiveCamera(fov, aspect, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('scene-container').appendChild(renderer.domElement);
+
+            createBook();
+            setupLighting();
+            setupEventListeners();
+            animate();
+            updateBookInfo();
+            updateBackground();
+            
+            updateCameraPosition();
+        }
+
+        function updateCameraPosition() {
+            if (isMobile) {
+                camera.position.z = 5.5;
+                camera.position.y = 0.3;
+            } else {
+                camera.position.z = 5;
+                camera.position.y = 0;
+            }
+            camera.lookAt(scene.position);
+        }
+
+        function createBook() {
+            if (book) scene.remove(book);
+
+            book = new THREE.Group();
+
+            const currentBook = books[currentBookIndex];
+
+            const scale = isMobile ? 1.1 : 1;
+            const scaledWidth = BOOK_WIDTH * scale;
+            const scaledHeight = BOOK_HEIGHT * scale;
+            const scaledThickness = BOOK_THICKNESS * scale;
+            const scaledCoverThickness = COVER_THICKNESS * scale;
+
+            const pageWidth = scaledWidth - (scaledCoverThickness * 2);
+            const pageHeight = scaledHeight - (scaledCoverThickness * 2);
+            const pageThickness = scaledThickness - (scaledCoverThickness * 2);
+            const pageGeometry = new THREE.BoxGeometry(pageWidth, pageHeight, pageThickness);
+            const pageMaterial = new THREE.MeshPhongMaterial({ color: 0xFFFFF0 });
+            const pages = new THREE.Mesh(pageGeometry, pageMaterial);
+
+            const coverGeometry = new THREE.BoxGeometry(scaledWidth, scaledHeight, scaledCoverThickness);
+            const coverMaterials = createBookMaterials();
+            const frontCover = new THREE.Mesh(coverGeometry, coverMaterials);
+            frontCover.position.z = (scaledThickness / 2) - (scaledCoverThickness / 2);
+
+            const backCoverMaterial = new THREE.MeshPhongMaterial({ 
+                color: new THREE.Color(currentBook.coverColor).multiplyScalar(0.9)
+            });
+            const backCover = new THREE.Mesh(coverGeometry, backCoverMaterial);
+            backCover.position.z = -(scaledThickness / 2) + (scaledCoverThickness / 2);
+
+            const spineGeometry = new THREE.BoxGeometry(scaledCoverThickness, scaledHeight, scaledThickness);
+            const spineMaterial = new THREE.MeshPhongMaterial({
+                map: createSpineTexture(),
+                color: currentBook.spineColor,
+                bumpScale: 0.01,
+                specular: 0x111111,
+                shininess: 10
+            });
+            const spine = new THREE.Mesh(spineGeometry, spineMaterial);
+            spine.position.x = -(scaledWidth / 2) + (scaledCoverThickness / 2);
+
+            book.add(pages);
+            book.add(frontCover);
+            book.add(backCover);
+            book.add(spine);
+
+            scene.add(book);
+        }
+
+        function createBookMaterials() {
+            const loader = new THREE.TextureLoader();
+            const currentBook = books[currentBookIndex];
+            
+            const coverTexture = loader.load(currentBook.coverImage);
+            coverTexture.wrapS = THREE.ClampToEdgeWrapping;
+            coverTexture.wrapT = THREE.ClampToEdgeWrapping;
+
+            const coverMaterial = new THREE.MeshPhongMaterial({
+                map: coverTexture,
+                bumpMap: coverTexture,
+                bumpScale: 0.01,
+                specular: 0x111111,
+                shininess: 5
+            });
+
+            return [
+                new THREE.MeshPhongMaterial({ color: currentBook.spineColor }),
+                new THREE.MeshPhongMaterial({ color: currentBook.spineColor }),
+                new THREE.MeshPhongMaterial({ color: currentBook.spineColor }),
+                new THREE.MeshPhongMaterial({ color: currentBook.spineColor }),
+                coverMaterial,
+                new THREE.MeshPhongMaterial({ color: currentBook.spineColor })
+            ];
+        }
+
+        function createSpineTexture() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 512;
+            canvas.height = 2048;
+
+            ctx.fillStyle = '#E0E0E0';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.font = 'bold 70px Arial';
+            ctx.fillStyle = '#000000';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.save();
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate(-Math.PI / 2);
+            const title = books[currentBookIndex].title.split(' ');
+            const lineHeight = 80;
+            const totalHeight = (title.length - 1) * lineHeight;
+            title.forEach((word, index) => {
+                const y = index * lineHeight - totalHeight / 2;
+                ctx.fillText(word, 0, y);
+            });
+            ctx.restore();
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function setupLighting() {
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+
+            const pointLight = new THREE.PointLight(0xffffff, 0.3);
+            pointLight.position.set(0, 0, 5);
+            scene.add(pointLight);
+        }
+
+        function setupEventListeners() {
+            document.addEventListener('mousedown', onPointerDown);
+            document.addEventListener('mousemove', onPointerMove);
+            document.addEventListener('mouseup', onPointerUp);
+            document.addEventListener('touchstart', onPointerDown);
+            document.addEventListener('touchmove', onPointerMove);
+            document.addEventListener('touchend', onPointerUp);
+
+            window.addEventListener('resize', onWindowResize, false);
+            document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+            document.getElementById('lang-toggle').addEventListener('click', toggleLanguage);
+            document.getElementById('prev-book').addEventListener('click', () => changeBook(-1));
+            document.getElementById('next-book').addEventListener('click', () => changeBook(1));
+            document.getElementById('buy-button').addEventListener('click', addToCart);
+            document.getElementById('info-toggle').addEventListener('click', toggleBookInfo);
+        }
+
+        function onPointerDown(event) {
+            isDragging = true;
+            previousMousePosition = {
+                x: event.clientX || (event.touches && event.touches[0].clientX),
+                y: event.clientY || (event.touches && event.touches[0].clientY)
+            };
+        }
+
+        function onPointerMove(event) {
+            if (!isDragging) return;
+
+            const clientX = event.clientX || (event.touches && event.touches[0].clientX);
+            const clientY = event.clientY || (event.touches && event.touches[0].clientY);
+
+            const deltaMove = {
+                x: clientX - previousMousePosition.x,
+                y: clientY - previousMousePosition.y
+            };
+
+            const rotationSpeed = 0.005;
+
+            book.rotation.y += deltaMove.x * rotationSpeed;
+            book.rotation.x += deltaMove.y * rotationSpeed;
+
+            previousMousePosition = {
+                x: clientX,
+                y: clientY
+            };
+        }
+
+       function onPointerUp(event) {
+            isDragging = false;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            TWEEN.update();
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            const aspect = window.innerWidth / window.innerHeight;
+            camera.aspect = aspect;
+            
+            isMobile = window.innerWidth <= 768;
+            camera.fov = isMobile ? 65 : 75;
+            
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            
+            updateCameraPosition();
+            createBook(); // 本のサイズを更新するために再作成
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('dark-theme');
+            updateBookInfo();
+        }
+
+        function toggleLanguage() {
+            currentLanguage = currentLanguage === 'en' ? 'ja' : 'en';
+            updateBookInfo();
+            updateButtonLanguage();
+        }
+
+        function updateButtonLanguage() {
+            const buyButton = document.getElementById('buy-button');
+            const infoToggle = document.getElementById('info-toggle');
+            buyButton.textContent = currentLanguage === 'en' ? 'Add to Cart' : 'カートに追加';
+            infoToggle.textContent = currentLanguage === 'en' ? (isInfoVisible ? 'Hide Info' : 'Show Info') : (isInfoVisible ? '情報を隠す' : '情報を表示');
+        }
+
+        function updateBookInfo() {
+            const bookInfoElement = document.getElementById('book-info');
+            const currentBook = books[currentBookIndex];
+
+            bookInfoElement.innerHTML = `
+                <h2>${currentLanguage === 'en' ? currentBook.title : currentBook.titleJa}</h2>
+                <p>${currentLanguage === 'en' ? 'By ' + currentBook.author : '著者：' + currentBook.authorJa}</p>
+                <p>${currentLanguage === 'en' ? currentBook.description : currentBook.descriptionJa}</p>
+                <p>${currentLanguage === 'en' ? currentBook.price : currentBook.priceJa}</p>
+            `;
+
+            updateButtonLanguage();
+        }
+
+        function toggleBookInfo() {
+            isInfoVisible = !isInfoVisible;
+            const bookInfoElement = document.getElementById('book-info');
+            bookInfoElement.classList.toggle('visible', isInfoVisible);
+            updateButtonLanguage();
+        }
+
+        function changeBook(direction) {
+            const oldBook = book;
+            currentBookIndex = (currentBookIndex + direction + books.length) % books.length;
+
+            new TWEEN.Tween(oldBook.position)
+                .to({ x: direction > 0 ? -5 : 5 }, 500)
+                .easing(TWEEN.Easing.Quadratic.In)
+                .onComplete(() => {
+                    scene.remove(oldBook);
+                    createBook();
+                })
+                .start();
+
+            new TWEEN.Tween(oldBook.rotation)
+                .to({ y: direction > 0 ? Math.PI / 2 : -Math.PI / 2 }, 500)
+                .easing(TWEEN.Easing.Quadratic.In)
+                .start();
+
+            updateBackground();
+            updateBookInfo();
+        }
+
+        function updateBackground() {
+            document.body.style.background = books[currentBookIndex].backgroundColor;
+        }
+
+        function addToCart() {
+            alert(currentLanguage === 'en' ? "Added to cart!" : "カートに追加されました！");
+        }
+
+        init();
+    </script>
+</body>
+</html>
